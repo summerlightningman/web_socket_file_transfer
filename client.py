@@ -1,44 +1,14 @@
 from PyQt5 import QtWidgets, QtCore
 from functools import partial
+from client_handler import ClientHandler
+
 import socket
 import pickle
 import os
 
 
-class ClientSocket(QtCore.QThread):
-    host: str
-    port: int
-    to_send = QtCore.pyqtSignal(socket.socket)
-    to_save = QtCore.pyqtSignal(bytes)
-    socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    def __init__(self, host, port):
-        super().__init__()
-
-        self.host = host
-        self.port = port
-
-        self.finished.connect(self.socket.close)
-
-    def run(self):
-        full_message = bytes()
-
-        self.socket.connect((self.host, self.port))
-        self.to_send.emit(self.socket)
-        while True:
-            try:
-                message = self.socket.recv(1024)
-                full_message += message
-                if b'<begin>' in full_message and b'<end>' in full_message:
-                    self.to_save.emit(full_message.lstrip(b'<begin>').rstrip(b'<end>'))
-                    full_message = bytes()
-            except ConnectionResetError:
-                QtWidgets.QMessageBox.critical(None, 'Ошибка соединения', 'Разорвано соединение с сервером')
-                self.terminate()
-
-
 class Client(QtWidgets.QWidget):
-    socket: ClientSocket
+    socket: ClientHandler
     to_send: socket.socket
 
     def __init__(self, parent=None, *args, **kwargs):
@@ -94,12 +64,13 @@ class Client(QtWidgets.QWidget):
         self.connection_button.clicked.connect(self.connection)
         self.disconnection_button.clicked.connect(self.disconnection)
 
-    def send(self, sock):
-        path = self.path.text()
-        file_name = os.path.basename(path)
-        file_content = open(path, 'rb').read()
-        message = pickle.dumps((file_name, file_content))
-        sock.send(b'<begin>' + message + b'<end>')
+    def block_controls(self, connected):
+        self.connection_button.setDisabled(connected)
+        self.host.setDisabled(connected)
+        self.port.setDisabled(connected)
+
+        self.disconnection_button.setEnabled(connected)
+        self.send_button.setEnabled(connected)
 
     def browse(self):
         selection = QtWidgets.QFileDialog.getOpenFileUrl(parent=self, caption='Выбор файла', filter='All (*)')
@@ -109,23 +80,35 @@ class Client(QtWidgets.QWidget):
     def connection(self):
         self.block_controls(True)
 
-        self.socket = ClientSocket(
+        self.socket = ClientHandler(
             host=self.host.text(),
             port=self.port.value()
         )
-        self.socket.to_send.connect(lambda sock: self.send_button.clicked.connect(partial(self.send, sock=sock)))
-        self.socket.to_save.connect(self.save)
+        self.socket.for_receive.connect(lambda sock: self.send_button.clicked.connect(partial(self.send, sock=sock)))
+        self.socket.receive_signal.connect(self.receive)
         self.socket.start()
 
+    def disconnection(self):
+        self.block_controls(False)
+
+        self.socket.terminate()
+
+    def send(self, sock):
+        path = self.path.text()
+        file_name = os.path.basename(path)
+        file_content = open(path, 'rb').read()
+        message = pickle.dumps((file_name, file_content))
+        sock.send(b'<begin>' + message + b'<end>')
+
     @staticmethod
-    def save(file):
-        YES = 16384
+    def receive(file):
+        yes = 16384
         confirm = QtWidgets.QMessageBox.question(None,
                                                  'Подтверждение сохранения файла',
                                                  'Был получен новый файл. Вы желаете его сохранить?',
                                                  buttons=QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
                                                  defaultButton=QtWidgets.QMessageBox.Yes)
-        if confirm == YES:
+        if confirm == yes:
             name, content = pickle.loads(file)
             dia = QtWidgets.QFileDialog()
             dia.setDefaultSuffix(name.split('.')[1])
@@ -136,19 +119,6 @@ class Client(QtWidgets.QWidget):
                 file = open(save_path, 'wb')
                 file.write(content)
                 file.close()
-
-    def disconnection(self):
-        self.block_controls(False)
-
-        self.socket.terminate()
-
-    def block_controls(self, connected):
-        self.connection_button.setDisabled(connected)
-        self.host.setDisabled(connected)
-        self.port.setDisabled(connected)
-
-        self.disconnection_button.setEnabled(connected)
-        self.send_button.setEnabled(connected)
 
 
 if __name__ == '__main__':

@@ -1,51 +1,12 @@
-from PyQt5 import QtWidgets, QtCore
 import socket
-from threading import Thread
 
+from PyQt5 import QtWidgets
 
-class ServerSocket(QtCore.QThread):
-    host: str
-    port: int
-    socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    clients = []
-
-    def __init__(self, host, port):
-        super().__init__()
-
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
-        self.host = host
-        self.port = port
-
-        self.started.connect(lambda: print('Server has run'))
-        self.finished.connect(lambda: print('Server has shut down'))
-
-    def run(self):
-        self.socket.bind((self.host, self.port))
-
-        self.socket.listen()
-
-        while True:
-            client, address = self.socket.accept()
-            self.clients.append(client)
-            print(f'{address} has connected')
-            client_thread = Thread(target=self.handle, args=(client, address))
-            client_thread.daemon = True
-            client_thread.start()
-
-    def handle(self, client, address):
-        while True:
-            try:
-                message = client.recv(1024)
-                for client in self.clients:
-                    client.send(message)
-            except ConnectionResetError:
-                self.clients.pop(self.clients.index(client))
-                print(f'{address} has disconnected')
-                break
+from server_handler import ServerHandler
 
 
 class Server(QtWidgets.QWidget):
-    socket: ServerSocket
+    socket: ServerHandler
 
     def __init__(self, flags=None, *args, **kwargs):
         super().__init__(flags, *args, **kwargs)
@@ -81,7 +42,7 @@ class Server(QtWidgets.QWidget):
         self.stop_button.clicked.connect(self.stop)
 
     def start(self):
-        self.socket = ServerSocket(
+        self.socket = ServerHandler(
             host=socket.gethostname(),
             port=self.port.value()
         )
